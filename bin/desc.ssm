@@ -1,0 +1,159 @@
+header
+{
+        typedef
+        {
+                #define TXRX_BITS       7
+                #include "txrx.cpp"
+        }
+
+        private
+        {
+                CTXRX txrx;
+
+                #define in_sync         (txrx.in_sync())
+                uint8_t prev_in_sync;
+                uint8_t b_cnt;
+                uint8_t txrx_byte;
+                uint32_t bytes_sent;
+        }
+
+        implementation
+        {
+                delay_ms(10);
+                prev_in_sync = in_sync;
+                b_cnt = 0;
+                bytes_sent = 0;
+        }
+
+        shutdown
+        {
+                delete all;
+        }
+
+        goto waiting;
+}
+
+waiting
+{
+        // Wait for transmission begin
+
+        in1 = in_sync != prev_in_sync;
+        in2 = b_cnt == TXRX_BITS;
+        in3 = b_cnt == 0;
+
+        goto { (in2)>send_prepare, (in3)>waiting, (in1,in3)>recv_prepare, (other)>E };
+}
+
+recv_prepare
+{
+        // Receiving prepare
+
+        typedef
+        {
+                // Testing of typedef section
+        }
+
+        implementation
+        {
+                prev_in_sync = in_sync;
+                b_cnt = TXRX_BITS;
+        }
+
+        goto txrx_bit;
+}
+
+send_prepare
+{
+        // Sending prepare
+
+        implementation
+        {
+                b_cnt = TXRX_BITS;
+                txrx_byte = 0;
+        }
+
+        goto txrx_bit;
+}
+
+txrx_bit
+{
+        // TX-RX single bit
+
+        in1 = b_cnt == 0;        
+
+        implementation
+        {
+                // Send bit
+                uint8_t bit = (txrx_byte >> b_cnt) & 1;
+                txrx.send_bit(bit);
+
+                // Receive bit
+                bit = 1<<b_cnt;
+                txrx_byte &= ~bit;
+                if (txrx.recv_bit()) txrx_byte |= bit;
+
+                b_cnt--;
+
+                elapsed = 0;
+        }
+
+        goto { (in1)>txrx_done, (other)>wait_partner };
+}
+
+txrx_done
+{
+        public
+        {
+                virtual void txrx_done();
+        }
+
+        // Transmission is done
+        implementation
+        {                
+                bytes_sent++;
+                txrx_done();
+        }
+
+        goto waiting;
+}
+
+wait_partner
+{
+        // Wait for partner is ready
+        in1 = in_sync != prev_in_sync;
+        in2 = elapsed > timeout;
+        
+        goto { (in1)>txrx_bit, (in2)>timeout, (in1,in2)>txrx_bit, (other)>wait_partner };
+}
+
+timeout
+{
+        public
+        {
+                virtual void txrx_timeout();
+        }
+
+        // Timeout
+        implementation
+        {
+                txrx_timeout();
+        }
+
+        goto waiting;
+}
+
+E
+{
+        public
+        {
+                virtual void txrx_error();
+        }
+
+        // Error state
+        implementation
+        {
+                txrx_error();
+        }
+
+        goto waiting;
+}
